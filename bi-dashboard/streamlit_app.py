@@ -20,10 +20,10 @@ st.markdown(
         [data-testid="stAppDeployButton"] {
             display: none !important;
         }
-        /* Hide Rerun / Always rerun */
+        /* Hide Rerun / Always rerun 
         [data-testid="stStatusWidget"] {
             display: none !important;
-        }
+        }*/
     </style>
     """,
     unsafe_allow_html=True,
