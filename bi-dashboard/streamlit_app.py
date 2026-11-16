@@ -1,36 +1,3 @@
-"""Nimbus BI: a revenue intelligence dashboard for a fictional B2B SaaS company.
-
-Demonstrates:
-- Layout-first loading: every page paints its frames, titles, and controls
-  first, and ``st.skeleton`` holds each slow card at its final size. Cached
-  reruns update cards in place, and slow loads show their spinner text on the
-  skeleton. The overview loads its cards concurrently in
-  ``@st.fragment(parallel=True)`` fragments; the accounts and pipeline pages
-  cross-filter between cards, so they draw every skeleton first and fill
-  them once the shared data has loaded.
-- A toolbar of global filters bound to the URL with ``bind="query-params"``
-  (period, regions and plans in a popover, and chart annotations)
-- Certified-metric badges, section SQL popovers, and ``st.menu_button`` card
-  menus with definition drawers, SQL, feedback, and chart toggles
-- ``st.echarts_chart`` for stacked areas with a forecast and a year-earlier
-  comparison, milestone annotations, hatched projections, waterfalls, donuts,
-  heatmaps, funnels, sankeys, gauges, and brushable scatter plots, including
-  selection-driven cross-filtering
-- ``st.dataframe`` with ``ButtonColumn`` row actions, ``MultiselectColumn``
-  colored badges, and sparkline / progress columns
-- ``@st.dialog(position="right")`` side drawers for account and metric details
-- ``streamlit-pivot`` (a Components v2 package) in a large ``@st.dialog``
-  for drag-and-drop pivoting and cell drill-down of the accounts and deals
-  tables
-- Dual light/dark custom theme (``.streamlit/config.toml``) with validated
-  chart palettes, Geist fonts, and compact dashboard padding
-
-The layout-first loading needs a Streamlit build with the ``st.skeleton``
-changes from streamlit/streamlit#17920 and #17924 (see ``requirements.txt``).
-
-All data is synthetic. Replace the generators in ``utils/data.py`` with your
-own queries.
-"""
 
 from pathlib import Path
 
