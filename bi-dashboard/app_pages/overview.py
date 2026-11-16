@@ -1,16 +1,13 @@
-"""Overview: revenue KPIs and charts that load concurrently, layout first.
-
-The main script paints the page layout right away: section headers, card
-frames and titles, and an ``st.skeleton`` sized like each card's content. It
-calls each card's ``@st.fragment(parallel=True)`` inside its skeleton, so the
-fragments load concurrently and each one's first element replaces its
-skeleton. Cached reruns update the cards in place without a skeleton.
-
-A card with its own controls (MRR by plan) must draw them inside its fragment,
-so that using them reruns only that card. It draws its frame, header, and
-skeleton itself.
+"""Revenue overview page.
+Revenue KPIs and charts load concurrently, with the layout displayed first.
+The main script displays section headers, card frames, titles, and skeleton
+placeholders immediately. Parallel fragments then replace the skeletons as
+their data becomes available.
+The revenue-by-industry card uses Streamlit's native ECharts component.
+Because the native component does not provide chart-click events, a selectbox
+is used to filter the Top Accounts table.
 """
-
+import streamlit as st
 from utils import charts, data
 from utils.components import (
     account_columns,
@@ -22,74 +19,159 @@ from utils.components import (
 )
 from utils.definitions import DEFINITIONS
 from utils.formatting import change, money, signed_pct, signed_pts
-
-import streamlit as st
-
-# Each skeleton has the height of the content that replaces it, so nothing
-# moves when the data arrives.
+# -------------------------------------------------------------------
+# Dashboard dimensions
+# -------------------------------------------------------------------
+# Each skeleton uses the height of the content that will replace it.
+# This prevents the dashboard layout from moving while data loads.
 KPI_HEIGHT = 186
 CHART_HEIGHT = 320
 USAGE_HEIGHT = 260
-DRILLDOWN_HEIGHT = 444  # The industry and top-accounts cards
+DRILLDOWN_HEIGHT = 444
+# -------------------------------------------------------------------
+# KPI configuration
+# -------------------------------------------------------------------
 KPIS = {
-    "arr": ("Annual recurring revenue", ":material/payments:", "area"),
-    "net_new_mrr": ("Net new MRR", ":material/trending_up:", "bar"),
-    "nrr": ("Net revenue retention", ":material/autorenew:", "line"),
-    "gross_churn": ("Monthly gross churn", ":material/trending_down:", "bar"),
+    "arr": (
+        "Annual recurring revenue",
+        ":material/payments:",
+        "area",
+    ),
+    "net_new_mrr": (
+        "Net new MRR",
+        ":material/trending_up:",
+        "bar",
+    ),
+    "nrr": (
+        "Net revenue retention",
+        ":material/autorenew:",
+        "line",
+    ),
+    "gross_churn": (
+        "Monthly gross churn",
+        ":material/trending_down:",
+        "bar",
+    ),
 }
-
+# -------------------------------------------------------------------
+# Current dashboard filters
+# -------------------------------------------------------------------
 filters = data.current_filters()
-
-
+# -------------------------------------------------------------------
+# CSV export
+# -------------------------------------------------------------------
 def export_csv() -> bytes:
-    # Called only when the button is clicked, so the button renders before the
-    # data has loaded.
+    """Export the currently filtered accounts as CSV."""
     accounts, _ = data.load_book()
-    return data.accounts_csv(data.filter_accounts(accounts, filters))
-
-
+    filtered_accounts = data.filter_accounts(
+        accounts,
+        filters,
+    )
+    return data.accounts_csv(filtered_accounts)
+# -------------------------------------------------------------------
+# KPI card
+# -------------------------------------------------------------------
 @st.fragment(parallel=True)
-def kpi_card(kpi: str, filters: data.Filters) -> None:
-    """One certified KPI. The page calls it inside its ``st.skeleton``."""
+def kpi_card(
+    kpi: str,
+    filters: data.Filters,
+) -> None:
+    """Display one certified revenue KPI."""
     accounts, history = data.load_book()
-    ids = data.filter_accounts(accounts, filters).index
-    series = data.monthly_kpis(history, ids, filters.months)[kpi]
-    first, last = series.iloc[0], series.iloc[-1]
-    window = f"vs. {filters.months} months ago"
+    filtered_accounts = data.filter_accounts(
+        accounts,
+        filters,
+    )
+    account_ids = filtered_accounts.index
+    monthly_kpis = data.monthly_kpis(
+        history,
+        account_ids,
+        filters.months,
+    )
+    series = monthly_kpis[kpi]
+    if series.empty:
+        st.warning(f"No data is available for {KPIS[kpi][0]}.")
+        return
+    first_value = series.iloc[0]
+    last_value = series.iloc[-1]
+    comparison_window = f"vs. {filters.months} months ago"
     if kpi == "arr":
-        value, delta, description = money(last), signed_pct(change(last, first)), window
+        value = money(last_value)
+        delta = signed_pct(
+            change(
+                last_value,
+                first_value,
+            )
+        )
+        description = comparison_window
     elif kpi == "net_new_mrr":
-        average = series.iloc[1:-1].mean()
-        value, delta = money(last), signed_pct(change(last, average))
+        comparison_values = series.iloc[1:-1]
+        if comparison_values.empty:
+            period_average = series.mean()
+        else:
+            period_average = comparison_values.mean()
+        value = money(last_value)
+        delta = signed_pct(
+            change(
+                last_value,
+                period_average,
+            )
+        )
         description = "vs. period average"
     elif kpi == "nrr":
-        value, delta, description = f"{last:.1f}%", signed_pts(last - first), window
+        value = f"{last_value:.1f}%"
+        delta = signed_pts(
+            last_value - first_value
+        )
+        description = comparison_window
     else:
-        value = f"{last:.1f}%"
-        delta = signed_pts(last - series.iloc[1:].mean())
+        comparison_values = series.iloc[1:]
+        if comparison_values.empty:
+            period_average = series.mean()
+        else:
+            period_average = comparison_values.mean()
+        value = f"{last_value:.1f}%"
+        delta = signed_pts(
+            last_value - period_average
+        )
         description = "vs. period average"
     label, icon, chart_type = KPIS[kpi]
+    sparkline_data = series.iloc[1:]
+    if sparkline_data.empty:
+        sparkline_data = series
     st.metric(
-        f"{label} :green[:material/verified:]",
-        value,
-        delta,
-        delta_color="inverse" if kpi == "gross_churn" else "normal",
+        label=f"{label} :green[:material/verified:]",
+        value=value,
+        delta=delta,
+        delta_color=(
+            "inverse"
+            if kpi == "gross_churn"
+            else "normal"
+        ),
         delta_description=description,
-        chart_data=series.iloc[1:],
+        chart_data=sparkline_data,
         chart_type=chart_type,
         icon=icon,
         border=True,
         help=DEFINITIONS[kpi].measures,
         height=KPI_HEIGHT,
     )
-
-
+# -------------------------------------------------------------------
+# MRR by plan
+# -------------------------------------------------------------------
 @st.fragment(parallel=True)
-def mrr_growth_card(filters: data.Filters) -> None:
-    """MRR by plan, with a $/% view and a menu with forecast and comparison."""
-    with st.container(border=True, height="stretch"):
+def mrr_growth_card(
+    filters: data.Filters,
+) -> None:
+    """Display monthly recurring revenue by plan."""
+    with st.container(
+        border=True,
+        height="stretch",
+    ):
         controls = card_header(
-            "MRR by plan", "Monthly recurring revenue, stacked by plan", certified=True
+            "MRR by plan",
+            "Monthly recurring revenue, stacked by plan",
+            certified=True,
         )
         view = controls.segmented_control(
             "View",
@@ -103,121 +185,264 @@ def mrr_growth_card(filters: data.Filters) -> None:
         card_menu(
             controls,
             "mrr_by_plan",
-            {"mrr_forecast": "forecast", "mrr_compare": "last year"},
+            {
+                "mrr_forecast": "forecast",
+                "mrr_compare": "last year",
+            },
         )
         with st.skeleton(height=CHART_HEIGHT):
             accounts, history = data.load_book()
-            region_accounts = accounts[accounts["region"].isin(filters.regions)]
-            monthly = data.mrr_by_plan(history, region_accounts, filters.months)
-            year_earlier = None
-            if st.session_state.get("mrr_compare"):
-                year_earlier = data.mrr_by_plan(
-                    history, region_accounts, filters.months, years_back=1
-                )
-            st.echarts_chart(
-                charts.mrr_growth(
-                    monthly,
-                    filters.plans,
-                    share=view == "%",
-                    forecast=data.mrr_forecast(monthly)
-                    if st.session_state.get("mrr_forecast")
-                    else None,
-                    year_earlier=year_earlier,
-                    milestones=data.milestones(filters),
-                ),
-                height=CHART_HEIGHT,
-                alt="Monthly recurring revenue by plan over time; Enterprise contributes most",
+            region_accounts = accounts[
+                accounts["region"].isin(filters.regions)
+            ]
+            monthly = data.mrr_by_plan(
+                history,
+                region_accounts,
+                filters.months,
             )
-
-
+            year_earlier = None
+            if st.session_state.get(
+                "mrr_compare",
+                False,
+            ):
+                year_earlier = data.mrr_by_plan(
+                    history,
+                    region_accounts,
+                    filters.months,
+                    years_back=1,
+                )
+            forecast = None
+            if st.session_state.get(
+                "mrr_forecast",
+                False,
+            ):
+                forecast = data.mrr_forecast(monthly)
+            chart_options = charts.mrr_growth(
+                monthly,
+                filters.plans,
+                share=view == "%",
+                forecast=forecast,
+                year_earlier=year_earlier,
+                milestones=data.milestones(filters),
+            )
+            st.echarts_chart(
+                chart_options,
+                height=CHART_HEIGHT,
+                key="mrr_growth_chart",
+                alt=(
+                    "Monthly recurring revenue by plan over time; "
+                    "Enterprise contributes most"
+                ),
+            )
+# -------------------------------------------------------------------
+# MRR bridge
+# -------------------------------------------------------------------
 @st.fragment(parallel=True)
-def mrr_bridge_chart(filters: data.Filters) -> None:
+def mrr_bridge_chart(
+    filters: data.Filters,
+) -> None:
+    """Display MRR movement over the selected period."""
     accounts, history = data.load_book()
-    ids = data.filter_accounts(accounts, filters).index
-    movements = data.mrr_movements(history, ids, filters.months)
+    filtered_accounts = data.filter_accounts(
+        accounts,
+        filters,
+    )
+    account_ids = filtered_accounts.index
+    movements = data.mrr_movements(
+        history,
+        account_ids,
+        filters.months,
+    )
+    chart_options = charts.mrr_bridge(movements)
     st.echarts_chart(
-        charts.mrr_bridge(movements),
+        chart_options,
         height=CHART_HEIGHT,
+        key="mrr_bridge_chart",
         alt=(
-            f"MRR grew from {money(movements['start'])} to {money(movements['end'])}, "
-            "mostly from expansion"
+            f"MRR grew from {money(movements['start'])} "
+            f"to {money(movements['end'])}, mostly from expansion"
         ),
     )
-
-
+# -------------------------------------------------------------------
+# Product usage heatmap
+# -------------------------------------------------------------------
 @st.fragment(parallel=True)
-def usage_chart(filters: data.Filters) -> None:
-    matrix = data.usage_matrix(data.load_usage(), filters.regions)
-    st.echarts_chart(
-        charts.usage_heatmap(matrix),
-        height=USAGE_HEIGHT,
-        alt="Product sessions by weekday and UTC hour, busiest on weekday afternoons",
+def usage_chart(
+    filters: data.Filters,
+) -> None:
+    """Display product sessions by weekday and UTC hour."""
+    usage_data = data.load_usage()
+    usage_matrix = data.usage_matrix(
+        usage_data,
+        filters.regions,
     )
-
-
+    chart_options = charts.usage_heatmap(
+        usage_matrix
+    )
+    st.echarts_chart(
+        chart_options,
+        height=USAGE_HEIGHT,
+        key="usage_heatmap_chart",
+        alt=(
+            "Product sessions by weekday and UTC hour, "
+            "busiest on weekday afternoons"
+        ),
+    )
+# -------------------------------------------------------------------
+# Industry drilldown and top accounts
+# -------------------------------------------------------------------
 @st.fragment
-def industry_drilldown(filters: data.Filters) -> None:
-    """Donut of MRR by industry that filters the top-accounts table on click.
-
-    This is a regular (not parallel) fragment because a click in the table
-    opens a dialog, and selecting a slice reruns only this section.
+def industry_drilldown(
+    filters: data.Filters,
+) -> None:
+    """Display revenue by industry and the filtered top accounts.
+    A native Streamlit selectbox is used for filtering. This avoids the
+    streamlit-echarts BidiComponent error and ensures that changing the
+    industry reruns only this fragment.
     """
     accounts, _ = data.load_book()
-    accounts = data.filter_accounts(accounts, filters)
-    active = accounts[accounts["mrr"] > 0]
-    by_industry = (
-        active.groupby("industry")["mrr"].sum().reindex(data.INDUSTRIES, fill_value=0)
+    filtered_accounts = data.filter_accounts(
+        accounts,
+        filters,
     )
-
-    mix_col, table_col = st.columns([2, 3])
-    with mix_col.container(border=True, height="stretch"):
+    active_accounts = filtered_accounts[
+        filtered_accounts["mrr"] > 0
+    ].copy()
+    revenue_by_industry = (
+        active_accounts
+        .groupby("industry")["mrr"]
+        .sum()
+        .reindex(
+            data.INDUSTRIES,
+            fill_value=0,
+        )
+    )
+    industry_column, accounts_column = st.columns(
+        [2, 3]
+    )
+    # ---------------------------------------------------------------
+    # Industry chart
+    # ---------------------------------------------------------------
+    with industry_column.container(
+        border=True,
+        height="stretch",
+    ):
         controls = card_header(
             "Revenue by industry",
-            "Click a slice to filter the accounts",
+            "Choose an industry to filter the accounts",
             certified=True,
         )
-        card_menu(controls, "industry_mix")
-        event = st.echarts_chart(
-            charts.industry_mix(by_industry),
-            on_select="rerun",
-            height=CHART_HEIGHT + 40,
-            alt="Share of MRR by industry",
+        card_menu(
+            controls,
+            "industry_mix",
         )
-
-    selected = [
-        data.INDUSTRIES[index]
-        for group in event.selection.selected
-        for index in group["data_indices"]
-    ]
-    top = active[active["industry"].isin(selected)] if selected else active
-    top = top.nlargest(10, "mrr")
-
-    with table_col.container(border=True, height="stretch"):
+        available_industries = [
+            industry
+            for industry in data.INDUSTRIES
+            if revenue_by_industry.get(industry, 0) > 0
+        ]
+        industry_options = [
+            "All industries",
+            *available_industries,
+        ]
+        selected_option = st.selectbox(
+            "Filter by industry",
+            options=industry_options,
+            index=0,
+            key="industry_filter",
+            help=(
+                "Select an industry to filter the Top Accounts table."
+            ),
+        )
+        if selected_option == "All industries":
+            selected_industry = None
+        else:
+            selected_industry = selected_option
+        industry_chart_options = charts.industry_mix(
+            revenue_by_industry
+        )
+        st.echarts_chart(
+            industry_chart_options,
+            height=CHART_HEIGHT + 40,
+            key="industry_mix_chart",
+            alt="Share of monthly recurring revenue by industry",
+        )
+    # ---------------------------------------------------------------
+    # Filter top accounts
+    # ---------------------------------------------------------------
+    if selected_industry:
+        top_accounts = active_accounts[
+            active_accounts["industry"] == selected_industry
+        ].copy()
+    else:
+        top_accounts = active_accounts.copy()
+    top_accounts = top_accounts.nlargest(
+        10,
+        "mrr",
+    )
+    # ---------------------------------------------------------------
+    # Top accounts table
+    # ---------------------------------------------------------------
+    with accounts_column.container(
+        border=True,
+        height="stretch",
+    ):
+        if selected_industry:
+            table_description = (
+                f"{selected_industry} customers by MRR"
+            )
+        else:
+            table_description = "Largest customers by MRR"
         controls = card_header(
             "Top accounts",
-            f"{selected[0]} customers by MRR"
-            if selected
-            else "Largest customers by MRR",
+            table_description,
         )
-        if selected:
-            controls.badge(selected[0], icon=":material/filter_alt:", color="primary")
-        table = account_table(top)
-        st.dataframe(
-            table,
-            column_config=account_columns(compact=True, key="top_accounts_click"),
-            hide_index=True,
-            height=CHART_HEIGHT + 40,
-            alt="Top accounts by monthly recurring revenue",
-        )
-        open_clicked_account(table, "top_accounts_click")
-
-
+        if selected_industry:
+            controls.badge(
+                selected_industry,
+                icon=":material/filter_alt:",
+                color="primary",
+            )
+        if top_accounts.empty:
+            st.info(
+                "No active accounts are available for this industry."
+            )
+        else:
+            account_table_data = account_table(
+                top_accounts
+            )
+            st.dataframe(
+                account_table_data,
+                column_config=account_columns(
+                    compact=True,
+                    key="top_accounts_click",
+                ),
+                hide_index=True,
+                height=CHART_HEIGHT + 40,
+            )
+            open_clicked_account(
+                account_table_data,
+                "top_accounts_click",
+            )
+# ===================================================================
+# PAGE LAYOUT
+# ===================================================================
+# -------------------------------------------------------------------
+# Revenue section header
+# -------------------------------------------------------------------
 actions = section_header(
     "Revenue",
-    help="Certified metrics, owned by revenue operations and refreshed hourly.",
+    help=(
+        "Certified metrics, owned by revenue operations "
+        "and refreshed hourly."
+    ),
     sql="revenue",
 )
-actions.badge("Live", icon=":material/radio_button_checked:", color="green")
+actions.badge(
+    "Live",
+    icon=":material/radio_button_checked:",
+    color="green",
+)
 actions.download_button(
     "Export",
     export_csv,
@@ -226,38 +451,63 @@ actions.download_button(
     icon=":material/download:",
     on_click="ignore",
 )
-
-# The main script draws every skeleton, so the page has its final layout from
-# the first paint. Each KPI's metric replaces its skeleton when its data arrives.
+# -------------------------------------------------------------------
+# KPI row
+# -------------------------------------------------------------------
+# The main script draws the skeletons immediately. Each KPI fragment
+# replaces its skeleton after the required data finishes loading.
 with st.container(horizontal=True):
-    for kpi in KPIS:
+    for kpi_name in KPIS:
         with st.skeleton(height=KPI_HEIGHT):
-            kpi_card(kpi, filters)
-
-growth_col, bridge_col = st.columns([3, 2])
-with growth_col:
+            kpi_card(
+                kpi_name,
+                filters,
+            )
+# -------------------------------------------------------------------
+# MRR growth and bridge row
+# -------------------------------------------------------------------
+growth_column, bridge_column = st.columns(
+    [3, 2]
+)
+with growth_column:
     mrr_growth_card(filters)
-with bridge_col.container(border=True, height="stretch"):
+with bridge_column.container(
+    border=True,
+    height="stretch",
+):
     controls = card_header(
         "MRR bridge",
         f"How MRR moved over the last {filters.months} months",
         certified=True,
     )
-    card_menu(controls, "mrr_bridge")
+    card_menu(
+        controls,
+        "mrr_bridge",
+    )
     with st.skeleton(height=CHART_HEIGHT):
         mrr_bridge_chart(filters)
-
+# -------------------------------------------------------------------
+# Usage heatmap
+# -------------------------------------------------------------------
 with st.container(border=True):
     controls = card_header(
         "When customers use Nimbus",
-        "Product sessions by weekday and hour (UTC) — shifts with the region filter",
+        (
+            "Product sessions by weekday and hour (UTC) "
+            "— shifts with the region filter"
+        ),
         certified=True,
     )
-    card_menu(controls, "usage")
+    card_menu(
+        controls,
+        "usage",
+    )
     with st.skeleton(height=USAGE_HEIGHT):
         usage_chart(filters)
-
-# A regular fragment runs in the main script and blocks it while it loads, so
-# it comes last, after every parallel fragment has started.
+# -------------------------------------------------------------------
+# Industry drilldown
+# -------------------------------------------------------------------
+# The regular fragment comes last because it runs in the main script.
+# All parallel fragments above start before this section loads.
 with st.skeleton(height=DRILLDOWN_HEIGHT):
     industry_drilldown(filters)

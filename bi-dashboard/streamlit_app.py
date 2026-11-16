@@ -38,16 +38,36 @@ from utils import data
 
 import streamlit as st
 
+
 st.set_page_config(
-    page_title="Nimbus BI",
+    page_title="PQ-BI",
     page_icon=":material/insights:",
     layout="wide",
 )
 
+# Hide only the Deploy button
+st.markdown(
+    """
+    <style>
+        /* Hide Deploy */
+        [data-testid="stAppDeployButton"] {
+            display: none !important;
+        }
+        /* Hide Rerun / Always rerun */
+        [data-testid="stStatusWidget"] {
+            display: none !important;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+
 STATIC = Path(__file__).parent / "static"
 logo_variant = "dark" if st.context.theme.type == "dark" else "light"
 st.logo(
-    STATIC / f"logo-{logo_variant}.svg", icon_image=STATIC / "icon.svg", size="large"
+    STATIC / f"logo-{logo_variant}.svg", icon_image=STATIC / "ruaLogo.svg", size="large"
 )
 
 page = st.navigation(
